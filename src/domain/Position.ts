@@ -19,7 +19,7 @@ export class Position {
   ) {}
 
   static fromAlgebraic(square: string): Position {
-    const file = square[0];
+    const file = square.charAt(0);
     const rank = Number(square.slice(1));
 
     if (square.length !== 2 || !isFile(file) || !isRank(rank)) {

@@ -11,6 +11,19 @@ describe("Board", () => {
       expect(board.turn).toBe("white");
     });
 
+    it("has full castling rights for both sides", () => {
+      expect(board.castlingRights).toEqual({
+        whiteKingside: true,
+        whiteQueenside: true,
+        blackKingside: true,
+        blackQueenside: true,
+      });
+    });
+
+    it("has no en passant target square", () => {
+      expect(board.enPassantTarget).toBeUndefined();
+    });
+
     it("places the white back rank correctly", () => {
       const backRank: [string, Piece][] = [
         ["a1", new Piece("white", "rook")],
@@ -52,6 +65,55 @@ describe("Board", () => {
     it("leaves the middle of the board empty", () => {
       expect(board.pieceAt(Position.fromAlgebraic("e4"))).toBeUndefined();
       expect(board.pieceAt(Position.fromAlgebraic("d5"))).toBeUndefined();
+    });
+  });
+
+  describe("toFen", () => {
+    it("serializes the starting position to standard FEN", () => {
+      expect(Board.startingPosition().toFen()).toBe(
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      );
+    });
+  });
+
+  describe("fromFen", () => {
+    it("round-trips the starting position", () => {
+      const board = Board.fromFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+
+      expect(board.pieceAt(Position.fromAlgebraic("e1"))?.equals(new Piece("white", "king"))).toBe(
+        true,
+      );
+      expect(board.turn).toBe("white");
+      expect(board.castlingRights).toEqual({
+        whiteKingside: true,
+        whiteQueenside: true,
+        blackKingside: true,
+        blackQueenside: true,
+      });
+      expect(board.enPassantTarget).toBeUndefined();
+    });
+
+    it("parses partial castling rights", () => {
+      const board = Board.fromFen("4k3/8/8/8/8/8/8/4K2R w K - 0 1");
+
+      expect(board.castlingRights).toEqual({
+        whiteKingside: true,
+        whiteQueenside: false,
+        blackKingside: false,
+        blackQueenside: false,
+      });
+    });
+
+    it("parses an en passant target square", () => {
+      const board = Board.fromFen("rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 1");
+
+      expect(board.enPassantTarget?.equals(Position.fromAlgebraic("e6"))).toBe(true);
+    });
+
+    it("parses black to move", () => {
+      const board = Board.fromFen("4k3/8/8/8/8/8/8/4K3 b - - 0 1");
+
+      expect(board.turn).toBe("black");
     });
   });
 });

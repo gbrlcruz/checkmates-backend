@@ -2,12 +2,14 @@
   "name": "checkmates-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "CheckMates backend — real-time chess room server with engine and LLM analysis",
+  "description": "CheckMates backend — real-time chess room server with engine-based analysis",
   "type": "module",
   "engines": {
     "node": "20.x"
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint ."

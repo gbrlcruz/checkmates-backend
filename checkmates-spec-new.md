@@ -1,12 +1,12 @@
-# Spec — CheckMates: Multiplayer Chess with AI-Powered Analysis
+# Spec — CheckMates: Multiplayer Chess with Engine-Powered Analysis
 
 ## 1. Overview
 
-**CheckMates** is a two-player chess web application, played via a room link (no accounts, no public matchmaking), with a game-analysis phase powered by a chess engine (Stockfish) and an additional phase for natural-language explanations via a free LLM.
+**CheckMates** is a two-player chess web application, played via a room link (no accounts, no public matchmaking), with a game-analysis phase powered entirely by a chess engine (Stockfish) — no external AI/LLM services involved.
 
 The project has three declared goals, all equally important:
 1. Deliver a fully working chess game, playable via link, end to end.
-2. Serve as a guided learning project on how to integrate chess engines and LLMs into a real application, with no shortcuts that hand over a finished result all at once.
+2. Serve as a guided learning project on how to integrate a chess engine into a real application, with no shortcuts that hand over a finished result all at once.
 3. Serve as applied practice of **Domain-Driven Design** (Eric Evans) and **Clean Architecture** (Robert C. Martin) concepts — the person owns physical copies of both books and wants the implementation to be a vehicle for learning those concepts, not just for producing a working result.
 
 ## 2. Instructions for whoever implements this spec
@@ -37,10 +37,11 @@ This spec must be executed in a **guided, incremental** way, regardless of which
 - Move classification into categories (best, good, neutral, inaccuracy, mistake, blunder) based on the evaluation swing.
 - Display of the classified move list at the end of the game.
 
-### Phase 3 — Natural-language explanation
-- Suggestion of the best alternative move when the move played is classified as a mistake or blunder.
-- Generation of a natural-language explanation of why each classification was given, using an LLM.
-- Integration of the explanation into the post-game analysis screen.
+### Phase 3 — Move-suggestion retrospective and win probability
+- A post-game retrospective summary: for every move classified as a mistake or blunder, an entry describing what the best alternative move would have been (e.g. "when Black played Nf6, the best move was e5").
+- Win/draw/loss (WDL) probability for each player, recalculated and displayed after every move of the game.
+- An interactive post-game replay, similar to chess.com's game review: the frontend can step through the entire game move by move, reconstructing the board at each point, with an arrow overlay pointing to the ideal move for the position currently shown.
+- All of the above are produced entirely from Stockfish's own output (best move, principal variation, and WDL statistics) — no external AI service is used at any point in this project.
 
 ## 4. Technical stack
 
@@ -50,22 +51,21 @@ This spec must be executed in a **guided, incremental** way, regardless of which
 | Backend | Node.js + `ws` (WebSocket) |
 | Frontend | React + `react-chessboard` |
 | Chess rules logic | `chess.js`, wrapped behind a domain port |
-| Analysis engine (Phase 2) | Stockfish (via WASM/Node binding) |
-| Natural-language explanation (Phase 3) | Groq API (free, no cost), accessed via a dedicated port |
+| Analysis engine (Phases 2 and 3) | Stockfish (via WASM/Node binding) |
 | Testing | Vitest (unit and integration), React Testing Library (components) |
 | CI | GitHub Actions (lint + typecheck + tests on every push/PR) |
 | Hosting | Render (static frontend and Node/WebSocket backend, both on the free tier) |
 | Repositories | Two separate repositories: `checkmates-backend` and `checkmates-frontend` |
 
-Groq was chosen for Phase 3 because it offers a stable, free tier at no cost, with no need to train any custom model — training a model from scratch is not viable at an individual scale, and fine-tuning a small model tends to require more infrastructure (and deliver lower quality) than simply using a ready-made free API with a well-crafted prompt.
+Stockfish is free, open-source software that runs locally on the same server as the backend — unlike a hosted API, it has no usage quota, no API key, and no cost of any kind. The only practical constraint is CPU/RAM on Render's free tier, which is addressed by keeping the engine's search depth/time bounded (see Phase 2, item 1).
 
 ## 5. Architecture principles
 
-The pattern adopted throughout the application is **Ports and Adapters (hexagonal architecture)**, aligned with Clean Architecture's **Dependency Rule**: code dependencies always point inward, from the outer layers (frameworks, UI, database/infra) toward the inner ones (business rules), never the other way around. This replaces the traditional Controller/Service/Repository layering, which tends to blur responsibilities when there are multiple external actors of different natures — here, the WebSocket connection, the chess engine, the LLM, and in-memory storage. Each of these actors becomes a **port** (interface) in the domain/application layer, with a concrete **adapter** in infrastructure.
+The pattern adopted throughout the application is **Ports and Adapters (hexagonal architecture)**, aligned with Clean Architecture's **Dependency Rule**: code dependencies always point inward, from the outer layers (frameworks, UI, database/infra) toward the inner ones (business rules), never the other way around. This replaces the traditional Controller/Service/Repository layering, which tends to blur responsibilities when there are multiple external actors of different natures — here, the WebSocket connection, the chess engine, and in-memory storage. Each of these actors becomes a **port** (interface) in the domain/application layer, with a concrete **adapter** in infrastructure.
 
 ### 5.1 Backend
 
-- **Layers**, mapped to Clean Architecture's circles: `domain` (equivalent to *Entities* — the most general and stable business rules, with no framework dependencies, e.g. `Board`, `Move`, `Room`), `application` (equivalent to *Use Cases*/*Interactors* — orchestrate the domain through ports, e.g. `CreateRoomUseCase`, `MakeMoveUseCase`), `infrastructure` (equivalent to *Frameworks & Drivers* — concrete adapters: the WebSocket server, the `chess.js` adapter, in-memory storage, the Stockfish adapter, the Groq adapter), `interface` (equivalent to *Interface Adapters* — handlers that translate WebSocket messages into use-case calls).
+- **Layers**, mapped to Clean Architecture's circles: `domain` (equivalent to *Entities* — the most general and stable business rules, with no framework dependencies, e.g. `Board`, `Move`, `Room`), `application` (equivalent to *Use Cases*/*Interactors* — orchestrate the domain through ports, e.g. `CreateRoomUseCase`, `MakeMoveUseCase`, `AnalyzeGameUseCase`), `infrastructure` (equivalent to *Frameworks & Drivers* — concrete adapters: the WebSocket server, the `chess.js` adapter, in-memory storage, the Stockfish adapter), `interface` (equivalent to *Interface Adapters* — handlers that translate WebSocket messages into use-case calls).
 - **Dependency rule**: the inner layers (`domain`, `application`) never import anything from `infrastructure` or `interface`.
 - **SOLID applied pragmatically**: one use case per responsibility (Single Responsibility); dependencies injected via ports in the constructor (Dependency Inversion); adapters that can be swapped without changing the code that consumes them (Open/Closed).
 - **Tactical Domain-Driven Design modeling** applied to domain entities: explicitly distinguish **Entities** (have their own identity over time, e.g. `Room`/an ongoing game, identified by its ID) from **Value Objects** (fully defined by their value, with no identity of their own, e.g. a board `Position`, or `Move` itself); evaluate whether `Room` should be modeled as the **Aggregate Root** — the entity responsible for guaranteeing the consistency of everything inside it (players, board, move history), acting as the single entry point for modifications; consider **Domain Events** for relevant state transitions (e.g. `MoveMade`, `GameEnded`, `DrawProposed`) as an explicit way to communicate state changes, especially useful when the same event needs to notify both players via WebSocket and, later on, the analysis step.
@@ -118,7 +118,7 @@ A shared WebSocket message contract (TypeScript types for the events exchanged b
 ## 7. Testing and CI strategy
 
 - **Unit tests**: domain and use cases, always TDD-driven, using fakes of the ports instead of real infrastructure.
-- **Integration tests**: concrete adapters (in-memory repository, `chess.js` adapter, Stockfish adapter, Groq adapter) and the full WebSocket flow in a test environment.
+- **Integration tests**: concrete adapters (in-memory repository, `chess.js` adapter, Stockfish adapter) and the full WebSocket flow in a test environment.
 - **Component tests** (frontend): behavior of key components and hooks.
 - **Pipeline (GitHub Actions)**, one workflow per repository: on every push and pull request — install dependencies → lint → typecheck → unit tests → integration tests. Pull requests can only be merged with a green pipeline.
 
@@ -152,13 +152,18 @@ Prerequisite: Phase 1 complete, with a finished game's move history available at
 3. **Move classification**: a rule that turns the evaluation swing between moves into a category (best/good/neutral/inaccuracy/mistake/blunder), with defined and tested thresholds. *Criterion: tests covering each category with known positions.*
 4. **Frontend display**: post-game analysis screen, listing each move with its category. *Criterion: after a game ends, the list of classified moves appears on screen.*
 
-## 10. Roadmap — Phase 3: Natural-language explanation
+## 10. Roadmap — Phase 3: Move-suggestion retrospective and win probability
 
 Prerequisite: Phase 2 complete.
 
-1. **Best alternative move suggestion**: when a move is classified as a mistake or blunder, display what the best move would have been according to the engine (already available in the Stockfish adapter's result). *Criterion: bad moves show the alternative right next to them on the analysis screen.*
-2. **LLM adapter (Groq)**: given the context of a move (evaluation before/after, category, best move, material change), generates a text explanation. Implemented behind a dedicated port (e.g. `NaturalLanguageExplainerPort`) and tested in isolation. *Criterion: an integration test calling the API returns coherent text for a known case.*
-3. **Explanation integration into the analysis screen**: every notable move now displays the LLM-generated explanatory text. *Criterion: a full game analyzed end to end, with explanatory text visible per move.*
+1. **WDL extension of the Stockfish adapter**: given a FEN, the adapter also returns win/draw/loss probability for the side to move, in addition to the evaluation and best move it already returns. Tested in isolation. *Criterion: an integration test with a known position returns plausible WDL percentages.*
+2. **Extend "Analyze Game" to capture WDL per move**: the use case built in Phase 2 now also stores the WDL statistics returned by the adapter for the position after each move, for both players. *Criterion: a use-case test with a fixed game returns WDL values alongside the evaluation for every move.*
+3. **"Build Move-Suggestion Retrospective" use case**: for every move already classified as a mistake or blunder (Phase 2), produce a summary entry describing what the best alternative move would have been, using the best move/principal variation the engine already returns — e.g. "when Black played Nf6, the best move was e5." Each entry must include the best move's origin and destination squares (not just its algebraic notation), since the frontend will need them to draw an arrow on the board. *Criterion: a use-case test with a fixed game returns the correct list of retrospective entries, including origin/destination squares.*
+4. **Frontend: WDL indicator per move**: the post-game analysis screen shows, for each move, the updated win/draw/loss probability for both players (e.g. as a small bar or chart next to the move list). *Criterion: stepping through the move list updates the WDL indicator accordingly.*
+5. **Frontend: retrospective summary panel**: a dedicated section of the analysis screen lists every retrospective entry produced in item 3. *Criterion: after a finished game, the retrospective summary is visible and matches the moves that were classified as mistakes or blunders.*
+6. **Frontend: interactive game replay**: a board component that reconstructs and displays the game's position at any ply, with previous/next navigation (and, ideally, jump-to-move). Position reconstruction uses the move history already available from the finished game, replayed via the same `ChessEnginePort`/`chess.js` used elsewhere in the frontend. *Criterion: navigating through the replay with previous/next correctly shows the board at each point of the game, matching what actually happened move by move.*
+7. **Frontend: best-move arrow overlay**: for whichever position is currently shown in the replay, draw an arrow on the board from the origin to the destination square of the engine's suggested best move (using the origin/destination data from item 3), mirroring the visual style of chess.com's post-game review. *Criterion: navigating the replay to a move classified as a mistake or blunder shows an arrow pointing from the ideal move's origin square to its destination square.*
+8. **Frontend: link retrospective entries to replay navigation**: clicking an entry in the retrospective summary panel (item 5) jumps the replay (item 6) directly to that move, with its arrow overlay (item 7) shown. *Criterion: clicking a retrospective entry moves the replay board to the corresponding position and shows the suggested move's arrow.*
 
 ## 11. Project premises and decisions
 
@@ -169,6 +174,6 @@ Prerequisite: Phase 2 complete.
 - A third person accessing the room link receives a blocking message, never becomes a spectator.
 - Hosting fully on Render (frontend and backend), on the free tier.
 - Separate repositories for frontend and backend, no monorepo.
-- Phase 3 uses the free Groq API as the LLM provider; no phase of this project involves training or fine-tuning a custom model.
+- Analysis in Phases 2 and 3 is powered entirely by the Stockfish engine, run locally on the backend server; no external AI/LLM service is used anywhere in this project, and no model is trained or fine-tuned.
 - Hexagonal architecture (Ports and Adapters) throughout the application, with TDD, SOLID, and Clean Code as mandatory practices for every deliverable.
 - Throughout implementation, Domain-Driven Design (Eric Evans) and Clean Architecture (Robert C. Martin) concepts should be explicitly referenced whenever plausible, as part of the project's learning goal.

@@ -15,4 +15,14 @@ describe("RoomId", () => {
 
     expect(id.equals(id)).toBe(true);
   });
+
+  it("round-trips through fromString", () => {
+    const id = RoomId.generate();
+
+    expect(RoomId.fromString(id.toString()).equals(id)).toBe(true);
+  });
+
+  it.each(["", "   "])("rejects an empty id string: %j", (invalid) => {
+    expect(() => RoomId.fromString(invalid)).toThrow();
+  });
 });
